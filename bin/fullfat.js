@@ -82,4 +82,6 @@ ff.on('start', function() {
   console.log('-> %s', a.name)
 }).on('upload', function(a) {
   console.log('<- %s', a.name)
+}).on('retry', function(a) {
+  console.log('@ %s', a)
 })

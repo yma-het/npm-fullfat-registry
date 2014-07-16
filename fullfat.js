@@ -151,6 +151,16 @@ FullFat.prototype.onchange = function(er, change) {
     this.getDoc(change)
 }
 
+FullFat.prototype.retryReq = function retryReq(req, fallback) {
+  var self = this
+
+  req.setTimeout(this.inactivity_ms, function() {
+    self.emit('retry', req.path)
+    req.abort()
+    fallback()
+  })
+}
+
 FullFat.prototype.getDoc = function(change) {
   var q = '?revs=true&att_encoding_info=true'
   var opt = url.parse(this.skim + '/' + change.id + q)
@@ -163,6 +173,8 @@ FullFat.prototype.getDoc = function(change) {
   var req = hh.get(opt)
   req.on('error', this.emit.bind(this, 'error'))
   req.on('response', parse(this.ongetdoc.bind(this, change)))
+
+  this.retryReq(req, this.getDoc.bind(this, change))
 }
 
 FullFat.prototype.ongetdoc = function(change, er, data, res) {
@@ -196,6 +208,8 @@ FullFat.prototype.putDoc = function(change) {
   var req = hh.get(opt)
   req.on('error', this.emit.bind(this, 'error'))
   req.on('response', parse(this.onfatget.bind(this, change)))
+
+  this.retryReq(req, this.putDoc.bind(this, change))
 }
 
 FullFat.prototype.putDesign = function(change) {
@@ -215,6 +229,8 @@ FullFat.prototype.putDesign = function(change) {
   req.on('response', parse(this.onputdesign.bind(this, change)))
   req.on('error', this.emit.bind(this, 'error'))
   req.end(b)
+
+  this.retryReq(req, this.putDesign.bind(this, change))
 }
 
 FullFat.prototype.onputdesign = function(change, er, data, res) {
@@ -238,6 +254,8 @@ FullFat.prototype.delete = function(change) {
   req.on('response', this.ondeletehead.bind(this, change))
   req.on('error', this.emit.bind(this, 'error'))
   req.end()
+
+  this.retryReq(req, this.delete.bind(this, change))
 }
 
 FullFat.prototype.ondeletehead = function(change, res) {
@@ -256,6 +274,8 @@ FullFat.prototype.ondeletehead = function(change, res) {
   req.on('response', parse(this.ondelete.bind(this, change)))
   req.on('error', this.emit.bind(this, 'error'))
   req.end()
+
+  this.retryReq(req, this.ondeletehead.bind(this, change, res))
 }
 
 FullFat.prototype.ondelete = function(change, er, data, res) {
@@ -454,6 +474,8 @@ FullFat.prototype.put = function(change, did) {
   req.write(doc)
   this.putAttachments(req, change, boundaries, send)
   req.on('response', parse(this.onputres.bind(this, change)))
+
+  this.retryReq(req, this.put.bind(this, change, did))
 }
 
 FullFat.prototype.putAttachments = function(req, change, boundaries, send) {
@@ -545,6 +567,8 @@ FullFat.prototype.fetchOne = function(change, need, did, v) {
   req.on('error', this.emit.bind(this, 'error'))
   req.on('response', this.onattres.bind(this, change, need, did, v, r))
   req.end()
+
+  this.retryReq(req, this.fetchOne.bind(this, change, need, did, v))
 }
 
 FullFat.prototype.onattres = function(change, need, did, v, r, res) {
