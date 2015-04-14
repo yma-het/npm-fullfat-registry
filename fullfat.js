@@ -167,7 +167,7 @@ FullFat.prototype.getDoc = function(change) {
   opt.method = 'GET'
   opt.headers = {
     'user-agent': this.ua,
-    'connection': 'close'
+    agent: false
   }
 
   var req = hh.get(opt)
@@ -203,7 +203,7 @@ FullFat.prototype.putDoc = function(change) {
   opt.method = 'GET'
   opt.headers = {
     'user-agent': this.ua,
-    'connection': 'close'
+    agent: false
   }
   var req = hh.get(opt)
   req.on('error', this.emit.bind(this, 'error'))
@@ -222,7 +222,7 @@ FullFat.prototype.putDesign = function(change) {
     'user-agent': this.ua,
     'content-type': 'application/json',
     'content-length': b.length,
-    'connection': 'close'
+    agent: false
   }
 
   var req = hh.request(opt)
@@ -246,7 +246,7 @@ FullFat.prototype.delete = function(change) {
   var opt = url.parse(this.fat + '/' + name)
   opt.headers = {
     'user-agent': this.ua,
-    'connection': 'close'
+    agent: false
   }
   opt.method = 'HEAD'
 
@@ -267,7 +267,7 @@ FullFat.prototype.ondeletehead = function(change, res) {
   opt = url.parse(this.fat + '/' + change.id + '?rev=' + rev)
   opt.headers = {
     'user-agent': this.ua,
-    'connection': 'close'
+    agent: false
   }
   opt.method = 'DELETE'
   var req = hh.request(opt)
@@ -297,9 +297,10 @@ FullFat.prototype.onfatget = function(change, er, f, res) {
   if (er && er.statusCode !== 404)
     return this.emit('error', er)
 
-  if (er)
+  if (er) {
     f = JSON.parse(JSON.stringify(change.doc))
-
+    f._attachments = {}
+  }
   f._attachments = f._attachments || {}
   change.fat = f
   this.merge(change)
@@ -454,7 +455,7 @@ FullFat.prototype.put = function(change, did) {
   p.headers = {
     'user-agent': this.ua,
     'content-type': 'multipart/related;boundary="' + boundary + '"',
-    'connection': 'close'
+    agent: false
   }
 
   var doc = new Buffer(JSON.stringify(f), 'utf8')
@@ -560,7 +561,7 @@ FullFat.prototype.fetchOne = function(change, need, did, v) {
   r.method = 'GET'
   r.headers = {
     'user-agent': this.ua,
-    'connection': 'close'
+    agent: false
   }
 
   var req = hh.request(r)
