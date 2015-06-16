@@ -18,6 +18,20 @@ var hh = require('http-https')
 
 var debug = require('debug')
 
+function formatArgs() {
+  var args = arguments;
+  var useColors = this.useColors;
+  var name = this.namespace;
+
+  args[0] = new Date().toUTCString()
+    +' +' + debug.humanize(this.diff) + 
+    + ' ' + name + ' ' + args[0];
+
+  return args;
+}
+
+debug.formatArgs = formatArgs
+
 var slice = [].slice
 
 var getLogger = function(name){
@@ -31,6 +45,8 @@ var readmeTrim = require('npm-registry-readme-trim')
 util.inherits(FullFat, EE)
 
 module.exports = FullFat
+
+dbg = 0
 
 function FullFat(conf) {
   if (!conf.skim || !conf.fat) {
@@ -336,8 +352,12 @@ FullFat.prototype.onfatget = function onfatget(change, er, f, res) {
 
 FullFat.prototype.merge = function merge(change) {
   change.log(arguments.callee.name)
+  
   var s = change.doc
   var f = change.fat
+
+  dbg && change.log(arguments.callee.name, 'source', s)
+  dbg && change.log(arguments.callee.name, 'fat', f)
 
   // if no versions in the skim record, then nothing to fetch
   if (!s.versions){
@@ -363,8 +383,6 @@ FullFat.prototype.merge = function merge(change) {
     }
   }
 
-  //postroit' spisok teh versiy, kotorye nam nado dosinkat
-
   var need = []
   var changed = false
   for (var v in s.versions) {
@@ -381,6 +399,10 @@ FullFat.prototype.merge = function merge(change) {
       need.push(v)
       changed = true
     }
+  }
+
+  if(changed){
+    change.log('CHANGED TRUE')
   }
 
   change.log('need', need)
@@ -410,6 +432,8 @@ FullFat.prototype.merge = function merge(change) {
       changed = true
     }
   }
+
+  s._rev = f._rev
 
   for (var k in s) {
     if (k !== '_attachments' && k !== 'versions') {
@@ -447,83 +471,168 @@ FullFat.prototype.put = function put(change, did) {
   var attSize = 0
   var atts = f._attachments = f._attachments || {}
 
-  // It's important that we do everything in enumeration order,
-  // because couchdb is a jerk, and ignores disposition headers.
-  // Still include the filenames, though, so at least we dtrt.
-  // did.forEach(function(att) {
-  //   // atts[att.name] = {
-  //   //   length: att.length,
-  //   //   follows: true
-  //   // }
+  var new_atts = {}
 
-  //   if (att.type)
-  //     atts[att.name].type = att.type
-  // })
+  did.forEach(function(att) {
+
+    new_atts[att.name] = {
+      length: att.length,
+      follows: true
+    }
+
+    if (att.type)
+      new_atts[att.name].type = att.type
+  })
 
   var send = []
-  Object.keys(atts).forEach(function (name) {
-    var att = atts[name]
+  
+  Object.keys(new_atts).forEach(function (name) {
+    var att = new_atts[name]
 
     if (att.follows !== true)
       return
 
     send.push([name, att])
-    attSize += att.length
-
-    var b = '\r\n--' + boundary + '\r\n' +
-            'content-length: ' + att.length + '\r\n' +
-            'content-disposition: attachment; filename=' +
-            JSON.stringify(name) + '\r\n'
-
-    if (att.type)
-      b += 'content-type: ' + att.type + '\r\n'
-
-    b += '\r\n'
-
-    boundaries.push(b)
-    bSize += b.length
   })
-
-  // one last boundary at the end
-  var b = '\r\n--' + boundary + '--'
-  bSize += b.length
-  boundaries.push(b)
 
   // put with new_edits=false to retain the same rev
   // this assumes that NOTHING else is writing to this database!
-  var p = url.parse(this.fat + '/' + f.name + '?new_edits=false')
+  //var p = url.parse(this.fat + '/' + f.name + '?new_edits=false')
+  var p = url.parse(this.fat + '/' + f.name + '?rev='+f._rev)
+  delete f._revisions
   p.method = 'PUT'
   p.headers = {
     'user-agent': this.ua,
-    'content-type': 'multipart/related;boundary="' + boundary + '"',
+    'content-type': 'application/json',
     agent: false
   }
 
   var doc = new Buffer(JSON.stringify(f), 'utf8')
-  var len = 0
+  var len = doc.length
 
-  // now, for the document
-  var b = '--' + boundary + '\r\n' +
-          'content-type: application/json\r\n' +
-          'content-length: ' + doc.length + '\r\n\r\n'
-  bSize += b.length
-
-  p.headers['content-length'] = attSize + bSize + doc.length
+  p.headers['content-length'] = len
 
   var req = hh.request(p)
   req.on('error', this.emit.bind(this, 'error'))
-  req.write(b, 'ascii')
 
-  change.log('writing doc:', JSON.stringify(JSON.parse(doc), null, 2))
-  
-  req.write(doc)
-  this.putAttachments(req, change, boundaries, send)
-  req.on('response', parse(this.onputres.bind(this, change)))
+  dbg && change.log('writing doc:', JSON.stringify(JSON.parse(doc), null, 2))
 
-  this.retryReq(req, this.put.bind(this, change, did))
+  req.on('response', parse(_onPutDoc.bind(this, change)))
+  req.end(doc)
+
+  function _onPutDoc(change, er, data, res){
+    change.log(arguments.callee.name)
+
+    dbg && change.log(arguments.callee.name, data)
+
+    if (!change.id)
+      throw new Error('wtf?')
+
+    // In some oddball cases, it looks like CouchDB will report stubs that
+    // it doesn't in fact have.  It's possible that this is due to old bad
+    // data in a past FullfatDB implementation, but whatever the case, we
+    // ought to catch such errors and DTRT.  In this case, the "right thing"
+    // is to re-try the PUT as if it had NO attachments, so that it no-ops
+    // the attachments that ARE there, and fills in the blanks.
+    // We do that by faking the onfatget callback with a 404 error.
+    if (er && er.statusCode === 412 &&
+        0 === er.message.indexOf('{"error":"missing_stub"')){
+
+      change.log('412 error missing stub')
+      this.emit('error', er)
+      
+    } else if (er){
+      this.emit('error', er)
+    } else {
+
+      _putAttachments.call(this, change, send, data.rev)
+
+    }
+  }
+
+  function _putAttachments(change, send, rev){
+
+    var done = []
+    var idx = 0
+
+    if(change.did.length !== 0){
+      _putOneAttachment.call(this, 0, rev, _attachmentDone)
+    } else {
+      this.resume()
+    }
+
+    function _putOneAttachment(idx, rev, doneCb){
+      change.log(arguments.callee.name)
+      
+      change.log(arguments.callee.name, 'idx, send', idx, send[idx])
+
+      var f = change.fat
+
+      var ns = send[idx]
+      
+      var name = ns[0]
+      var att = ns[1]
+
+      var p = url.parse(this.fat + '/' + f.name + '/' + name + '?&rev='+rev)
+      
+      p.method = 'PUT'
+      p.headers = {
+        'user-agent': this.ua,
+        'content-type': att.type|| 'application/octet-steam',
+        agent: false
+      }
+
+      var file = path.join(this.tmp, change.id + '-' + change.seq, name)
+      //var data = fs.readFileSync(file)
+      var rs = fs.createReadStream(file)
+
+      var req = hh.request(p)
+      req.on('error', this.emit.bind(this, 'error'))
+
+      change.log('writing attachment', p.path)
+      req.on('response', parse(doneCb.bind(this, name, att, idx)))
+
+      rs.pipe(req)
+      //req.end(data)
+
+      // XXX req.setTimeout()
+    }
+
+
+    function _attachmentDone(name, att, idx, er, data, res){
+
+      dbg && change.log('_attachmentDone(name, att, idx, er, data, res)', name, att, idx, er, data)
+      
+      if (er){
+        this.emit('error', er)
+      } else {
+        this.emit('putAttachment', change, data, name, att)
+
+        done.push(name)
+        
+        if(done.length === send.length){
+
+          change.log('attachments done', done)
+
+          rimraf(this.tmp + '/' + change.id + '-' + change.seq, function(err){
+            change.log('rmrf done', err)
+          })
+          
+          this.emit('put', change, done)
+          
+          this.resume()
+        } else {
+          _putOneAttachment.call(this, idx+1, data.rev, _attachmentDone)
+        }
+      }
+    }
+
+  }
+
+
 }
 
-FullFat.prototype.putAttachments = function putAttachments(req, change, boundaries, send) {
+FullFat.prototype.putAttachments0 = function putAttachments0(req, change, boundaries, send) {
  // send is the ordered list of [[name, attachment object],...]
   var b = boundaries.shift()
   var ns = send.shift()
@@ -558,6 +667,11 @@ FullFat.prototype.putAttachments = function putAttachments(req, change, boundari
 
 }
 
+
+FullFat.prototype.onputdoc = function onputdoc(change, er, data, res) {
+}
+
+
 FullFat.prototype.onputres = function onputres(change, er, data, res) {
   change.log(arguments.callee.name)
 
@@ -587,8 +701,8 @@ FullFat.prototype.onputres = function onputres(change, er, data, res) {
 }
 
 FullFat.prototype.fetchAll = function fetchAll(change, need, did) {
-   change.log(arguments.callee.name)
- var f = change.fat
+  change.log(arguments.callee.name)
+  var f = change.fat
   var tmp = path.resolve(this.tmp, change.id + '-' + change.seq)
   var len = need.length
   if (!len)
