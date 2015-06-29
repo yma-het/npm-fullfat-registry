@@ -14,10 +14,9 @@ var crypto = require('crypto')
 var once = require('once')
 var parse = require('parse-json-response')
 var hh = require('http-https')
-
+var crypto = require('crypto');
 
 var debug = require('debug')
-
 function formatArgs() {
   var args = arguments;
   var useColors = this.useColors;
@@ -29,8 +28,15 @@ function formatArgs() {
 
   return args;
 }
-
 debug.formatArgs = formatArgs
+
+function randomValueHex (len) {
+    return crypto.randomBytes(Math.ceil(len/2))
+        .toString('hex') // convert to hexadecimal format
+        .slice(0,len);   // return required number of characters
+}
+
+
 
 var slice = [].slice
 
@@ -46,7 +52,7 @@ util.inherits(FullFat, EE)
 
 module.exports = FullFat
 
-dbg = 0
+dbg = undefined
 
 function FullFat(conf) {
   if (!conf.skim || !conf.fat) {
@@ -223,11 +229,45 @@ FullFat.prototype.ongetdoc = function(change, er, data, res) {
   }
 }
 
+FullFat.prototype.onFetchRev = function onFetchRev(change, er, f, res) {
+  change.log(arguments.callee.name)
+  //console.log('DELETING, f = ' + change.fat)
+  change.fat = change.doc
+  if (f._rev == undefined){
+    change.fat._rev = '1-' + randomValueHex(32)
+  } else{
+    change.fat._rev = f._rev
+  }
+  //change.fat._rev = f._rev
+  this.put(change, [])
+
+}
+
+
 FullFat.prototype.unpublish = function unpublish(change) {
   change.log(arguments.callee.name)
   
-  change.fat = change.doc
-  this.put(change, [])
+  //console.log('DELETING, f = ' + change.fat)
+  //change.fat = change.doc
+
+
+  var opt = url.parse(this.fat + '/' + change.id)
+
+  opt.method = 'GET'
+  opt.headers = {
+    'user-agent': this.ua,
+    agent: false
+  }
+  var req = hh.get(opt)
+  req.on('error', this.emit.bind(this, 'error'))
+  req.on('response', parse(this.onFetchRev.bind(this, change)))
+
+  this.retryReq(req, this.unpublish.bind(this, change))
+
+
+
+
+ // this.put(change, [])
 }
 
 FullFat.prototype.putDoc = function putDoc(change) {
@@ -344,7 +384,13 @@ FullFat.prototype.onfatget = function onfatget(change, er, f, res) {
     f = JSON.parse(JSON.stringify(change.doc))
     f._attachments = {}
   }
-  f._attachments = f._attachments || {}
+  //#anchor
+  f._attachments = {}
+  //if (f._rev == undefined){
+  //  f._rev = '1-' + randomValueHex(32)
+  //} else {
+  //  console.log("!!!not modofoed!!!")
+  //}
   change.fat = f
   this.merge(change)
 }
@@ -355,6 +401,7 @@ FullFat.prototype.merge = function merge(change) {
   
   var s = change.doc
   var f = change.fat
+  var fat_revision = f._rev
 
   dbg && change.log(arguments.callee.name, 'source', s)
   dbg && change.log(arguments.callee.name, 'fat', f)
@@ -433,7 +480,9 @@ FullFat.prototype.merge = function merge(change) {
     }
   }
 
-  s._rev = f._rev
+  change.log('assigning to s._rev :', s._rev, "value of f._rev: ", f._rev)
+
+  s._rev = fat_revision
 
   for (var k in s) {
     if (k !== '_attachments' && k !== 'versions') {
@@ -495,10 +544,12 @@ FullFat.prototype.put = function put(change, did) {
     send.push([name, att])
   })
 
+  change.log('writing doc with rev: ', f._rev)
+
   // put with new_edits=false to retain the same rev
   // this assumes that NOTHING else is writing to this database!
   //var p = url.parse(this.fat + '/' + f.name + '?new_edits=false')
-  var p = url.parse(this.fat + '/' + f.name + '?rev='+f._rev)
+  var p = url.parse(this.fat + '/' + f.name + "?new_edits=false") //+ '?rev='+f._rev)
   delete f._revisions
   p.method = 'PUT'
   p.headers = {
@@ -565,6 +616,7 @@ FullFat.prototype.put = function put(change, did) {
       change.log(arguments.callee.name)
       
       change.log(arguments.callee.name, 'idx, send', idx, send[idx])
+      change.log(arguments.callee.name, 'rev = ', rev)
 
       var f = change.fat
 
