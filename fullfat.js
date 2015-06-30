@@ -36,6 +36,10 @@ function randomValueHex (len) {
         .slice(0,len);   // return required number of characters
 }
 
+function escapeSlashes (str) {
+    return str.replace('/', '%2F')
+}
+
 
 
 var slice = [].slice
@@ -174,7 +178,7 @@ FullFat.prototype.onchange = function(er, change) {
   this.pause()
   this.since = change.seq
 
-  change.log = getLogger(change.id)
+  change.log = getLogger("Printing with unescaped slashes: " + change.id)
 
   this.emit('change', change)
 
@@ -196,7 +200,13 @@ FullFat.prototype.retryReq = function retryReq(req, fallback) {
 
 FullFat.prototype.getDoc = function(change) {
   var q = '?revs=true&att_encoding_info=true'
-  var opt = url.parse(this.skim + '/' + change.id + q)
+  // if we have design document, then slash escaping is not situable.
+  if (change.id.slice(0,7) == "_design"){
+    var opt = url.parse(this.skim + '/' + change.id + q)
+  }
+  else {
+    var opt = url.parse(this.skim + '/' + escapeSlashes(change.id) + q)
+  }
   opt.method = 'GET'
   opt.headers = {
     'user-agent': this.ua,
@@ -251,7 +261,7 @@ FullFat.prototype.unpublish = function unpublish(change) {
   //change.fat = change.doc
 
 
-  var opt = url.parse(this.fat + '/' + change.id)
+  var opt = url.parse(this.fat + '/' + escapeSlashes(change.id))
 
   opt.method = 'GET'
   opt.headers = {
@@ -274,7 +284,7 @@ FullFat.prototype.putDoc = function putDoc(change) {
   change.log(arguments.callee.name)
 
   var q = '?revs=true&att_encoding_info=true'
-  var opt = url.parse(this.fat + '/' + change.id + q)
+  var opt = url.parse(this.fat + '/' + escapeSlashes(change.id) + q)
 
   opt.method = 'GET'
   opt.headers = {
@@ -320,7 +330,7 @@ FullFat.prototype.onputdesign = function onputdesign(change, er, data, res) {
 
 FullFat.prototype.delete = function delete_(change) {
   change.log(arguments.callee.name)
-  var name = change.id
+  var name = escapeSlashes(change.id)
 
   var opt = url.parse(this.fat + '/' + name)
   opt.headers = {
@@ -344,7 +354,7 @@ FullFat.prototype.ondeletehead = function ondeletehead(change, res) {
     return this.afterDelete(change)
 
   var rev = res.headers.etag.replace(/^"|"$/g, '')
-  opt = url.parse(this.fat + '/' + change.id + '?rev=' + rev)
+  opt = url.parse(this.fat + '/' + escapeSlashes(change.id) + '?rev=' + rev)
   opt.headers = {
     'user-agent': this.ua,
     agent: false
@@ -420,9 +430,9 @@ FullFat.prototype.merge = function merge(change) {
     for (var i = 0; !pass && i < this.whitelist.length; i++) {
       var w = this.whitelist[i]
       if (typeof w === 'string')
-        pass = w === change.id
+        pass = w === escapeSlashes(change.id)
       else
-        pass = w.exec(change.id)
+        pass = w.exec(escapeSlashes(change.id))
     }
     if (!pass) {
       f._attachments = {}
@@ -549,7 +559,7 @@ FullFat.prototype.put = function put(change, did) {
   // put with new_edits=false to retain the same rev
   // this assumes that NOTHING else is writing to this database!
   //var p = url.parse(this.fat + '/' + f.name + '?new_edits=false')
-  var p = url.parse(this.fat + '/' + f.name + "?new_edits=false") //+ '?rev='+f._rev)
+  var p = url.parse(this.fat + '/' + escapeSlashes(f.name) + "?new_edits=false") //+ '?rev='+f._rev)
   delete f._revisions
   p.method = 'PUT'
   p.headers = {
@@ -625,7 +635,7 @@ FullFat.prototype.put = function put(change, did) {
       var name = ns[0]
       var att = ns[1]
 
-      var p = url.parse(this.fat + '/' + f.name + '/' + name + '?&rev='+rev)
+      var p = url.parse(this.fat + '/' + escapeSlashes(f.name) + '/' + name + '?&rev='+rev)
       
       p.method = 'PUT'
       p.headers = {
@@ -634,7 +644,7 @@ FullFat.prototype.put = function put(change, did) {
         agent: false
       }
 
-      var file = path.join(this.tmp, change.id + '-' + change.seq, name)
+      var file = path.join(this.tmp, escapeSlashes(change.id) + '-' + change.seq, name)
       //var data = fs.readFileSync(file)
       var rs = fs.createReadStream(file)
 
@@ -666,7 +676,7 @@ FullFat.prototype.put = function put(change, did) {
 
           change.log('attachments done', done)
 
-          rimraf(this.tmp + '/' + change.id + '-' + change.seq, function(err){
+          rimraf(this.tmp + '/' + escapeSlashes(change.id) + '-' + change.seq, function(err){
             change.log('rmrf done', err)
           })
           
@@ -701,7 +711,7 @@ FullFat.prototype.putAttachments0 = function putAttachments0(req, change, bounda
   change.log(arguments.callee.name, name, 'start')
 
   req.write(b, 'ascii')
-  var file = path.join(this.tmp, change.id + '-' + change.seq, name)
+  var file = path.join(this.tmp, escapeSlashes(change.id) + '-' + change.seq, name)
   var data = fs.readFileSync(file)
   //var fstr = fs.createReadStream(file)
 
@@ -747,7 +757,7 @@ FullFat.prototype.onputres = function onputres(change, er, data, res) {
   else {
     this.emit('put', change, data)
     // Just a best-effort cleanup.  No big deal, really.
-    rimraf(this.tmp + '/' + change.id + '-' + change.seq, function() {})
+    rimraf(this.tmp + '/' + escapeSlashes(change.id) + '-' + change.seq, function() {})
     this.resume()
   }
 }
@@ -755,7 +765,7 @@ FullFat.prototype.onputres = function onputres(change, er, data, res) {
 FullFat.prototype.fetchAll = function fetchAll(change, need, did) {
   change.log(arguments.callee.name)
   var f = change.fat
-  var tmp = path.resolve(this.tmp, change.id + '-' + change.seq)
+  var tmp = path.resolve(this.tmp, escapeSlashes(change.id) + '-' + change.seq)
   var len = need.length
   if (!len)
     return this.put(change, did)
@@ -774,7 +784,7 @@ FullFat.prototype.fetchOne = function fetchOne(change, need, did, v) {
   var f = change.fat
   var r = url.parse(change.doc.versions[v].dist.tarball)
   if (this.registry) {
-    var p = '/' + change.id + '/-/' + path.basename(r.pathname)
+    var p = '/' + escapeSlashes(change.id) + '/-/' + path.basename(r.pathname)
     r = url.parse(this.registry + p)
   }
 
@@ -797,8 +807,8 @@ FullFat.prototype.onattres = function onattres(change, need, did, v, r, res) {
   var f = change.fat
   var att = r.href
   var sum = f.versions[v].dist.shasum
-  var filename = f.name + '-' + v + '.tgz'
-  var file = path.join(this.tmp, change.id + '-' + change.seq, filename)
+  var filename = escapeSlashes(f.name) + '-' + v + '.tgz'
+  var file = path.join(this.tmp, escapeSlashes(change.id) + '-' + change.seq, filename)
 
   // TODO: If the file already exists, get its size.
   // If the size matches content-length, get the md5
@@ -872,8 +882,8 @@ FullFat.prototype.onattres = function onattres(change, need, did, v, r, res) {
     // registry where this is being stored.  It'll be rewritten by
     // the _show/pkg function when going through the rewrites, anyway,
     // but this url will work if the couch itself is accessible.
-    var newatt = this.publicFat + '/' + change.id +
-                 '/' + change.id + '-' + v + '.tgz'
+    var newatt = this.publicFat + '/' + escapeSlashes(change.id) +
+                 '/' + escapeSlashes(change.id) + '-' + v + '.tgz'
     f.versions[v].dist.tarball = newatt
 
     if (res.headers['content-length'])
