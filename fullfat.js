@@ -198,6 +198,19 @@ FullFat.prototype.retryReq = function retryReq(req, fallback) {
   })
 }
 
+FullFat.prototype.retryReqIn = function retryReqIn(req, fallback, timeout) {
+  console.log('registering timeout function for putDoc')
+  var self = this
+
+  req.setTimeout(timeout, function() {
+    console.log('hangling timeout!')
+    self.emit('retry', req.path)
+    req.abort()
+    fallback()
+  })
+  console.log('registered timeout function for putDoc')
+}
+
 FullFat.prototype.getDoc = function(change) {
   var q = '?revs=true&att_encoding_info=true'
   // if we have design document, then slash escaping is not situable.
@@ -294,8 +307,11 @@ FullFat.prototype.putDoc = function putDoc(change) {
   var req = hh.get(opt)
   req.on('error', this.emit.bind(this, 'error'))
   req.on('response', parse(this.onfatget.bind(this, change)))
+  req.on("socket", function(){
+    console.log("socket is assigned to this request");
+  })
 
-  this.retryReq(req, this.putDoc.bind(this, change))
+  this.retryReqIn(req, this.putDoc.bind(this, change), 5000)
 }
 
 FullFat.prototype.putDesign = function putDesign(change) {
